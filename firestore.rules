@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    function isMasterAdmin() {
+      return isAuthenticated() && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'robert.f.telekom@gmail.com') ||
+        request.auth.token.admin == true ||
+        request.auth.token.role == 'admin'
+      );
+    }
+    function isTitanVip() {
+      return isAuthenticated() && request.auth.token.email != null && (
+        request.auth.token.email.lower() == 'sh00trs.tv@gmail.com' ||
+        request.auth.token.email.lower() == 'twoandahalfeafc@gmail.com'
+      );
+    }
+    function hasActiveSubscription(userId) {
+      return isMasterAdmin() || isTitanVip() || (
+        request.auth.token.hasActiveSubscription == true ||
+        request.auth.token.subscriptionPlan in ['creator', 'pro', 'elite', 'titan']
+      );
+    }
+
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isMasterAdmin();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if (
+        isOwner(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isAdmin', 'isTitanVip', 'subscriptionPlan', 'hasActiveSubscription'])
+      ) || isMasterAdmin();
+      allow delete: if isMasterAdmin();
+    }
+
+    // Kanal-Konfigurationen: Streng geschützt – Nur mit aktivem Abo, VIP oder Admin
+    match /users/{userId}/channelConfigs/{configId} {
+      allow read: if isOwner(userId) || isMasterAdmin();
+      allow write: if (isOwner(userId) && hasActiveSubscription(userId)) || isMasterAdmin();
+    }
+
+    // Clips Sub-collection
+    match /users/{userId}/clips/{clipId} {
+      allow read, write: if isOwner(userId) || isMasterAdmin();
+    }
+
+    // Pending Streams (Interactive Email / Web Claim)
+    match /users/{userId}/pending_streams/{streamId} {
+      allow read: if isOwner(userId) || isMasterAdmin();
+      allow write: if isMasterAdmin();
+    }
+
+    // Invoices Sub-collection (Unlöschbar)
+    match /users/{userId}/invoices/{invoiceId} {
+      allow read: if isOwner(userId) || isMasterAdmin();
+      allow write: if false;
+      allow delete: if false;
+    }
+
+    // Stream Invitations Sub-collection (Multi-Platform Einladungen & Reminder)
+    match /users/{userId}/stream_invitations/{inviteId} {
+      allow read: if isOwner(userId) || isMasterAdmin();
+      allow write: if isMasterAdmin();
+    }
+
+    // Stream Pulses Sub-collection (10-Minuten Bot Heartbeats)
+    match /users/{userId}/stream_pulses/{pulseId} {
+      allow read: if isOwner(userId) || isMasterAdmin();
+      allow write: if isMasterAdmin();
+    }
+
+    // Encrypted BYOK Secrets (Streng serverseitig geschützt)
+    match /users/{userId}/secrets/{secretId} {
+      allow read, write: if isMasterAdmin();
+    }
+
+    // Admin VIP Whitelist
+    match /vip_whitelist/{entryId} {
+      allow read, write: if isMasterAdmin();
+    }
+  }
+}
